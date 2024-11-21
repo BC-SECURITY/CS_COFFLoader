@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace COFFLoader
+namespace CoffLoader
 {
     #region structs
     [StructLayout(LayoutKind.Sequential)]

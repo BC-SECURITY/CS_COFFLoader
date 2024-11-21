@@ -8,8 +8,8 @@
         <ProjectGuid>{0C395721-2D3A-4DD3-9D88-124A0CF67A66}</ProjectGuid>
         <OutputType>Exe</OutputType>
         <AppDesignerFolder>Properties</AppDesignerFolder>
-        <RootNamespace>Bofloader</RootNamespace>
-        <AssemblyName>Bofloader</AssemblyName>
+        <RootNamespace>CoffLoader</RootNamespace>
+        <AssemblyName>CoffLoader</AssemblyName>
         <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
         <FileAlignment>512</FileAlignment>
         <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
@@ -42,13 +42,14 @@
     </ItemGroup>
     <ItemGroup>
         <Compile Include="Program.cs"/>
-        <Compile Include="Properties\AssemblyInfo.cs"/>
         <Compile Include="src\CoffParser.cs"/>
         <Compile Include="src\CoffStructs.cs"/>
-        <Compile Include="src\RunCoff.cs"/>
     </ItemGroup>
     <ItemGroup>
       <None Include="packages.config" />
+    </ItemGroup>
+    <ItemGroup>
+      <Folder Include="Properties\" />
     </ItemGroup>
     <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets"/>
     <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
