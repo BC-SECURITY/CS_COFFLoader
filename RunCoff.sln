@@ -1,6 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Bofloader", "Bofloader\Bofloader.csproj", "{0C395721-2D3A-4DD3-9D88-124A0CF67A66}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RunCoff", "RunCoff\RunCoff.csproj", "{0C395721-2D3A-4DD3-9D88-124A0CF67A66}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
