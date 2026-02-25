@@ -1,102 +1,172 @@
-from struct import pack, calcsize
+#!/usr/bin/env python3
+import os
+import sys
+import base64
+import shlex
+from binascii import hexlify, unhexlify
+import struct
 
-def bof_pack(fstring: str, args: list):
-    # Most code taken from: https://github.com/trustedsec/COFFLoader/blob/main/beacon_generate.py
-    # Emulates the native Cobalt Strike bof_pack() function.
-    # Documented here: https://hstechdocs.helpsystems.com/manuals/cobaltstrike/current/userguide/content/topics_aggressor-scripts/as-resources_functions.htm#bof_pack
-    #
-    # Type 	Description 				Unpack With (C)
-    # --------|---------------------------------------|------------------------------
-    # b       | binary data 			      |	BeaconDataExtract
-    # i       | 4-byte integer 			      |	BeaconDataInt
-    # s       | 2-byte short integer 		      |	BeaconDataShort
-    # z       | zero-terminated+encoded string 	      |	BeaconDataExtract
-    # Z       | zero-terminated wide-char string      |	(wchar_t *)BeaconDataExtract
-    buffer = b""
-    size = 0
-   
-    def addshort(short):
-        nonlocal buffer
-        nonlocal size
-        buffer += pack("<h", int(short))
-        size += 2
 
-    def addint(dint):
-        nonlocal buffer
-        nonlocal size
-        buffer += pack("<i", int(dint))
-        size += 4
+class Packer:
+    """
+    Emulates Cobalt Strike's bof_pack() style:
+      - final blob is: [uint32 total_size][packed_fields...]
+      - fields are packed per-format
 
-    def addstr(s):
-        nonlocal buffer
-        nonlocal size
-        if(isinstance(s, str)):
-            s = s.encode("utf-8")
-        fmt = "<L{}s".format(len(s) + 1)
-        buffer += pack(fmt, len(s)+1, s)
-        size += calcsize(fmt)
+    Format chars:
+      b = binary bytes (uint32 len + bytes)
+      i = int32
+      s = uint16
+      z = utf-8 string, null-terminated (uint32 len+1 + bytes + 0x00)
+      Z = utf-16le string, null-terminated (uint32 len+2 + bytes + 0x00 0x00)
 
-    def addWstr(s):
-        nonlocal buffer
-        nonlocal size
-        if(isinstance(s, str)):
-            s = s.encode("utf-16_le")
-        fmt = "<L{}s".format(len(s) + 2)
-        buffer += pack(fmt, len(s)+2, s)
-        size += calcsize(fmt)
+    Extra (optional):
+      u = uint32
+      B = bool (uint32 0/1)
+    """
 
-    def addbinary(b):
-        # Add binary data to the buffer (don't know if this works)
-        nonlocal buffer
-        nonlocal size
-        fmt = "<L{}s".format(len(b) + 1)
-        buffer += pack(fmt, len(b)+1, b)
-        size += calcsize(fmt)
+    def __init__(self):
+        self.buffer = bytearray()
 
-    if(len(fstring) != len(args)):
-        raise Exception(f"Format string length must be the same as argument length: fstring:{len(fstring)}, args:{len(args)}")
+    @property
+    def size(self) -> int:
+        return len(self.buffer)
 
-    bad_char_exception = "Invalid character in format string: "
-    # pack each arg into the buffer
-    for i,c in enumerate(fstring):
-        if(c == "b"):
-            with open(args[i], "rb") as fd:
-                addbinary(fd.read())
-        elif(c == "c"):
-            addbinary(args[i])
-        elif(c == "i"):
-            addint(args[i])
-        elif(c == "s"):
-            addshort(args[i])
-        elif(c == "z"):
-            addstr(args[i])
-        elif(c == "Z"):
-            addWstr(args[i])
+    def getbuffer(self) -> bytes:
+        return struct.pack("<I", self.size) + bytes(self.buffer)
+
+    def addbytes(self, b):
+        if b is None:
+            b = b""
+        if isinstance(b, str):
+            b = b.encode("utf-8")
         else:
-            raise Exception(f"{bad_char_exception}{fstring}\n{(len(bad_char_exception) + i)*' '}^")
-    
-    # Pack up the buffer size into the buffer itself
-    return pack("<L", size) + buffer
+            b = bytes(b)
+
+        self.buffer += struct.pack("<I", len(b))
+        self.buffer += b
+
+    def addstr(self, s):
+        if s is None:
+            s = ""
+        if isinstance(s, bytes):
+            raw = s
+        else:
+            raw = str(s).encode("utf-8")
+
+        raw0 = raw + b"\x00"
+        self.buffer += struct.pack("<I", len(raw0))
+        self.buffer += raw0
+
+    def addWstr(self, s):
+        if s is None:
+            s = ""
+        raw0 = (str(s) + "\x00").encode("utf-16le")
+        self.buffer += struct.pack("<I", len(raw0))
+        self.buffer += raw0
+
+    def addbool(self, b):
+        self.buffer += struct.pack("<I", 1 if bool(b) else 0)
+
+    def adduint32(self, n):
+        self.buffer += struct.pack("<I", int(n) & 0xFFFFFFFF)
+
+    def addint(self, n):
+        self.buffer += struct.pack("<i", int(n))
+
+    def addshort(self, n):
+        # Match your new packer: unsigned 16-bit
+        self.buffer += struct.pack("<H", int(n) & 0xFFFF)
+
+
+def _parse_binary_arg(arg: str) -> bytes:
+    """
+    Back-compat + quality-of-life:
+      - if arg is a file path that exists -> read file bytes
+      - else if startswith hex: -> hex-decode
+      - else if startswith b64: -> base64-decode
+      - else -> treat as utf-8 bytes
+    """
+    if arg is None:
+        return b""
+
+    # file path behavior (old packer)
+    if isinstance(arg, str) and os.path.isfile(arg):
+        with open(arg, "rb") as f:
+            return f.read()
+
+    if isinstance(arg, (bytes, bytearray)):
+        return bytes(arg)
+
+    s = str(arg)
+
+    if s.startswith("hex:"):
+        return unhexlify(s[4:].strip())
+    if s.startswith("b64:"):
+        return base64.b64decode(s[4:].strip())
+
+    return s.encode("utf-8")
+
+
+def bof_pack(fstring: str, args: list) -> bytes:
+    if len(fstring) != len(args):
+        raise ValueError(
+            f"Format string length must match arguments: fstring={len(fstring)} args={len(args)}"
+        )
+
+    p = Packer()
+
+    for i, c in enumerate(fstring):
+        a = args[i]
+
+        if c == "b":
+            p.addbytes(_parse_binary_arg(a))
+        elif c == "i":
+            p.addint(a)
+        elif c == "s":
+            p.addshort(a)
+        elif c == "z":
+            p.addstr(a)
+        elif c == "Z":
+            p.addWstr(a)
+        elif c == "u":
+            p.adduint32(a)
+        elif c == "B":
+            # accept "true/false/1/0" strings too
+            if isinstance(a, str):
+                p.addbool(a.strip().lower() in ("1", "true", "yes", "y", "on"))
+            else:
+                p.addbool(a)
+        else:
+            raise ValueError(f"Invalid format character '{c}' at position {i}.")
+
+    return p.getbuffer()
+
+
+def pack_to_b64hex(fstring: str, arg_list: list) -> str:
+    packed = bof_pack(fstring, arg_list)
+    # matches your new: base64(hexlify(bytes))
+    return base64.b64encode(hexlify(packed)).decode("utf-8")
+
 
 if __name__ == "__main__":
-   # Interactive method to use bof_pack()
-   import sys
-   from binascii import hexlify
-   from base64 import b64encode
+    if len(sys.argv) < 3 or "-h" in sys.argv or "--help" in sys.argv:
+        print("bof_pack: pack arguments in a format suitable to send to a beacon-object-file")
+        print("Usage:")
+        print("  bof_pack.py <format_string> <arg1> [arg2] [arg3] [...]")
+        print("")
+        print("Format chars: b i s z Z (optional: u B)")
+        print("Binary 'b' accepts:")
+        print("  - a file path (existing file) OR")
+        print("  - hex:<hexbytes> OR b64:<base64bytes> OR raw string bytes")
+        sys.exit(0)
 
-   if(len(sys.argv) < 3 or "-h" in sys.argv or "--help" in sys.argv):
-       print("bof_pack: pack arguments in a format suitable to send to a beacon-object-file")
-       print("Usage: bof_pack.py <format_string> <arg1> [arg2] [arg3] [...]")
-       print("The format string must only include the following characters: b, i, s, z, Z")
-   else:
-       try:
-           packed = bof_pack(fstring=sys.argv[1], args=sys.argv[2:])
-           print(" ".join(sys.argv[2:]) + " (\"" + sys.argv[1] + "\")")
-           print("-hex-> " + hexlify(packed).decode('utf-8'))
-           print("-b64-> " + b64encode(packed).decode('utf-8'))
-       except Exception as e:
-           print("Exception occured packing your data:")
-           print(e)
+    fstring = sys.argv[1]
+    args = sys.argv[2:]
 
+    packed = bof_pack(fstring, args)
 
-
+    print(" ".join(args) + ' ("' + fstring + '")')
+    print("-hex-> " + hexlify(packed).decode("utf-8"))
+    print("-b64(hex)-> " + base64.b64encode(hexlify(packed)).decode("utf-8"))
+    print("-b64(raw)-> " + base64.b64encode(packed).decode("utf-8"))

@@ -7,6 +7,8 @@ from datetime import datetime
 from binascii import hexlify
 from beacon_generate import bof_pack
 
+_pass_count = 0
+_fail_count = 0
 DEBUGALL = True
 
 now = datetime.now()
@@ -23,6 +25,7 @@ def uni( data ):
     return ret
 
 def execute( bof, format_str="", arguments=[] ):
+    global _pass_count, _fail_count
     args = "00"
     if( len(arguments) > 0):
         args = bof_pack( format_str, arguments )
@@ -36,7 +39,12 @@ def execute( bof, format_str="", arguments=[] ):
     else:
         cmd = EXE + " go ..\\..\\..\\..\\CS-Situational-Awareness-BOF\\SA\\%s\\%s.x64.o %s >> ..\\Scripts\\results\\%s\\%s.txt" % (bof, bof, args, time_d, bof)    
     print( cmd )
-    os.system( cmd )
+    ret = os.system( cmd )
+    if ret == 0:
+        _pass_count += 1
+    else:
+        _fail_count += 1
+    return ret
 
 def adcs_enum(debug=False):
     if debug == False: return
@@ -397,6 +405,21 @@ def wmi_query(debug=False):
     except:
         print("[!] ERROR %s", traceback.print_exc())
 
+def secinject(debug=False):
+    if debug == False: return
+    try:
+        print("[*] secinject")
+        execute("secinject")
+    except:
+        print("[!] ERROR %s", traceback.print_exc())
+def clipboard_inject(debug=False):
+    if debug == False: return
+    try:
+        print("[*] clipboard_inject")
+        execute("ClipboardWindow-Inject")
+    except:
+        print("[!] ERROR %s", traceback.print_exc())
+
 if __name__=="__main__":
     if len(sys.argv) > 1: 
         EXE=C_EXE
@@ -450,7 +473,9 @@ if __name__=="__main__":
         "vssenum": [vssenum, True],
         "whoami": [whoami, False],
         "windowlist": [windowlist, True],
-        "wmi_query": [wmi_query, True ]
+        "wmi_query": [wmi_query, True ],
+        "secinject": [secinject, True],
+        "clipboard_inject": [clipboard_inject, True],
     }
 
     for func in funcs:
@@ -458,3 +483,4 @@ if __name__=="__main__":
             funcs[func][0](debug=True)
         else:    
             funcs[func][0](debug=funcs[func][1])
+    print("\nRESULTS: %d/%d passed, %d failed" % (_pass_count, _pass_count + _fail_count, _fail_count))
