@@ -53,7 +53,7 @@ namespace CoffLoader
         private static int memcmp(byte* dst, string src)
         {
             int index = 0;
-            int size = src.Length;
+            int size = Math.Min(src.Length, 8);  // COFF symbol names are at most 8 bytes
             byte[] d = new byte[size];
             for (index = 0; index < size; index++)
             {
@@ -323,6 +323,12 @@ namespace CoffLoader
                                 "\tReadin longOffsetValue : 0x{0:llX}",
                                 longoffsetvalue)
                             );
+                            if (coff_sym->SectionNumber == 0 || coff_sym->SectionNumber > sectionMapping.Count)
+                            {
+                                Debug.WriteLine($"Invalid SectionNumber: {coff_sym->SectionNumber}");
+                                retcode = 1;
+                                goto cleanup;
+                            }
                             longoffsetvalue =
                                 (ulong)sectionMapping[coff_sym->SectionNumber - 1].ToInt64()
                                 + longoffsetvalue;
@@ -349,6 +355,12 @@ namespace CoffLoader
                                             + coff_reloc->VirtualAddress
                                     )
                                 );
+                            if (coff_sym->SectionNumber == 0 || coff_sym->SectionNumber > sectionMapping.Count)
+                            {
+                                Debug.WriteLine($"Invalid SectionNumber: {coff_sym->SectionNumber}");
+                                retcode = 1;
+                                goto cleanup;
+                            }
                             long a =
                                 sectionMapping[coff_sym->SectionNumber - 1].ToInt64() + offsetvalue;
                             long b =
@@ -356,7 +368,7 @@ namespace CoffLoader
                             Debug.WriteLine(String.Format("\tReadin OffsetValue : 0x{0:X}", offsetvalue));
                             Debug.WriteLine(String.Format("\t\tReferenced Section: 0x{0:X}", a));
                             Debug.WriteLine(String.Format("\t\tEnd of Relocation Bytes: 0x{0:X}", b));
-                            if ((a - b) > 0xffffffff)
+                            if ((a - b) > (long)int.MaxValue || (a - b) < (long)int.MinValue)
                             {
                                 Console.WriteLine("Relocations > 4 gigs away, exiting");
                                 retcode = 1;
@@ -388,13 +400,19 @@ namespace CoffLoader
                             }
                             else
                             {
+                                if (coff_sym->SectionNumber == 0 || coff_sym->SectionNumber > sectionMapping.Count)
+                                {
+                                    Debug.WriteLine($"Invalid SectionNumber: {coff_sym->SectionNumber}");
+                                    retcode = 1;
+                                    goto cleanup;
+                                }
                                 long a = sectionMapping[coff_sym->SectionNumber - 1].ToInt64();
                                 long b =
                                     sectionMapping[counter].ToInt64()
                                     + coff_reloc->VirtualAddress
                                     + 4;
 
-                                if ((a - b) > 0xffffffff)
+                                if ((a - b) > (long)int.MaxValue || (a - b) < (long)int.MinValue)
                                 {
                                     Console.WriteLine("Relocations > 4 gigs away, exiting");
                                     retcode = 1;
@@ -409,6 +427,39 @@ namespace CoffLoader
                                 Debug.WriteLine(String.Format("\t\tRelative address: 0x{0:X}", offsetvalue));
                                 Marshal.WriteInt32(new IntPtr(b - 4), (int)offsetvalue);
                             }
+                        }
+                        else if (
+                            coff_reloc->Type == Win32.IMAGE_REL_AMD64_REL32_1
+                            || coff_reloc->Type == Win32.IMAGE_REL_AMD64_REL32_2
+                            || coff_reloc->Type == Win32.IMAGE_REL_AMD64_REL32_3
+                            || coff_reloc->Type == Win32.IMAGE_REL_AMD64_REL32_4
+                            || coff_reloc->Type == Win32.IMAGE_REL_AMD64_REL32_5
+                        )
+                        {
+                            Debug.WriteLine("coff_sym->value_u[0] != 0  <==> coff_reloc->type REL32_1-5");
+                            int typeOffset = coff_reloc->Type - Win32.IMAGE_REL_AMD64_REL32;
+                            if (coff_sym->SectionNumber == 0 || coff_sym->SectionNumber > sectionMapping.Count)
+                            {
+                                Debug.WriteLine($"Invalid SectionNumber: {coff_sym->SectionNumber}");
+                                retcode = 1;
+                                goto cleanup;
+                            }
+                            long a = sectionMapping[coff_sym->SectionNumber - 1].ToInt64();
+                            long b =
+                                sectionMapping[counter].ToInt64()
+                                + coff_reloc->VirtualAddress
+                                + 4
+                                + typeOffset;
+                            if ((a - b) > (long)int.MaxValue || (a - b) < (long)int.MinValue)
+                            {
+                                Console.WriteLine("Relocations > 4 gigs away, exiting");
+                                retcode = 1;
+                                goto cleanup;
+                            }
+                            uint relOffset = (uint)Marshal.ReadInt32(new IntPtr(b - 4 - typeOffset));
+                            relOffset += (uint)(a - b);
+                            relOffset += (uint)coff_sym->Value;
+                            Marshal.WriteInt32(new IntPtr(b - 4 - typeOffset), (int)relOffset);
                         }
                         else
                         {
@@ -456,7 +507,7 @@ namespace CoffLoader
                             long b =
                                 sectionMapping[counter].ToInt64() + coff_reloc->VirtualAddress + 4;
                             // Checks the distance between the raw code section and the relocation table
-                            if ((a - b) > 0xffffffff)
+                            if ((a - b) > (long)int.MaxValue || (a - b) < (long)int.MinValue)
                             {
                                 Console.WriteLine("Relocations > 4 gigs away, exiting\n");
                                 retcode = 1;
@@ -479,37 +530,53 @@ namespace CoffLoader
                                 BitConverter.GetBytes(a - b),
                                 sizeof(uint)
                             );
+                            if (functionMappingCount >= 256)
+                            {
+                                Console.WriteLine("functionMapping overflow: too many external symbols");
+                                retcode = 1;
+                                goto cleanup;
+                            }
                             functionMappingCount++;
                         }
                         else if (
-                            coff_reloc->Type >= Win32.IMAGE_REL_AMD64_REL32
-                            && coff_reloc->Type <= Win32.IMAGE_REL_AMD64_REL32_5
+                            coff_reloc->Type == Win32.IMAGE_REL_AMD64_REL32_1
+                            || coff_reloc->Type == Win32.IMAGE_REL_AMD64_REL32_2
+                            || coff_reloc->Type == Win32.IMAGE_REL_AMD64_REL32_3
+                            || coff_reloc->Type == Win32.IMAGE_REL_AMD64_REL32_4
+                            || coff_reloc->Type == Win32.IMAGE_REL_AMD64_REL32_5
                         )
                         {
                             Debug.WriteLine(
-                                "coff_sym->value_u[0] == 0  <==> coff_reloc->type between 4 and 9"
+                                "coff_sym->value_u[0] == 0  <==> coff_reloc->type REL32_1-5"
                             );
-                            /* This shouldn't be needed here, but incase there's a defined symbol
-                             * that somehow doesn't have a function, try to resolve it here.*/
-                            long a = sectionMapping[coff_sym->SectionNumber - 1].ToInt64();
+                            long tmp = functionMapping.ToInt64();
+                            long a = tmp + functionMappingCount * 8;
+                            int typeOffset = coff_reloc->Type - Win32.IMAGE_REL_AMD64_REL32;
                             long b =
-                                sectionMapping[counter].ToInt64() + coff_reloc->VirtualAddress + 4;
-                            IntPtr c = new IntPtr(b - 4);
-                            long offsetvalue1 = (long)Marshal.ReadInt32(c);
-
-                            if ((a - b) > 0xffffffff)
+                                sectionMapping[counter].ToInt64() + coff_reloc->VirtualAddress + 4 + typeOffset;
+                            if ((a - b) > (long)int.MaxValue || (a - b) < (long)int.MinValue)
                             {
                                 Console.WriteLine("Relocations > 4 gigs away, exiting\n");
                                 retcode = 1;
                                 goto cleanup;
                             }
-                            Debug.WriteLine(string.Format("\t\tReadin offset value: 0x{0:X}", offsetvalue1));
-                            offsetvalue1 +=
-                                sectionMapping[coff_sym->SectionNumber - 1].ToInt64() - b;
-                            offsetvalue1 += coff_sym->Value;
-                            offsetvalue1 += (coff_reloc->Type - Win32.IMAGE_REL_AMD64_REL32);
-                            Debug.WriteLine(string.Format("\t\tRelative address: 0x{0:X}", offsetvalue1));
-                            Marshal.WriteIntPtr(c, new IntPtr(offsetvalue1));
+                            Win32.memcpy(
+                                new IntPtr(a),
+                                BitConverter.GetBytes(new IntPtr(funcptrlocation).ToInt64()),
+                                sizeof(long)
+                            );
+                            Win32.memcpy(
+                                new IntPtr(b - 4 - typeOffset),
+                                BitConverter.GetBytes((int)(a - b)),
+                                sizeof(uint)
+                            );
+                            if (functionMappingCount >= 256)
+                            {
+                                Console.WriteLine("functionMapping overflow: too many external symbols");
+                                retcode = 1;
+                                goto cleanup;
+                            }
+                            functionMappingCount++;
                         }
                         else
                         {
@@ -530,6 +597,12 @@ namespace CoffLoader
                 {
                     if (memcmp(coff_sym->Name, Encoding.Default.GetString(functionname)) == 0)
                     {
+                        if (coff_sym->SectionNumber == 0 || coff_sym->SectionNumber > sectionMapping.Count)
+                        {
+                            Debug.WriteLine($"Invalid SectionNumber: {coff_sym->SectionNumber}");
+                            retcode = 1;
+                            goto cleanup;
+                        }
                         Debug.WriteLine(string.Format(
                             "\t\tFound entry {1}! \n\t\t\t Address to execute: 0x{0:X}",
                             sectionMapping[coff_sym->SectionNumber - 1].ToInt64() + coff_sym->Value,
@@ -562,12 +635,7 @@ namespace CoffLoader
 
                         foo((char*)funcName, argumentSize);
                         Debug.WriteLine("Beacon Object File Completed.");
-                        Win32.VirtualFreeEx(
-                            IntPtr.Zero,
-                            (IntPtr)funcName,
-                            IntPtr.Zero,
-                            Win32.AllocationType.Release
-                        );
+                        Win32.VirtualFree((IntPtr)funcName, IntPtr.Zero, Win32.AllocationType.Release);
                         break;
                     }
                 }
@@ -598,6 +666,12 @@ namespace CoffLoader
                         localfunc,
                         hash_djb(Encoding.Default.GetBytes(localfunc)))
                     );
+                    if (coff_sym->SectionNumber == 0 || coff_sym->SectionNumber > sectionMapping.Count)
+                    {
+                        Debug.WriteLine($"Invalid SectionNumber: {coff_sym->SectionNumber}");
+                        retcode = 1;
+                        goto cleanup;
+                    }
                     IntPtr functionAddress = new IntPtr(
                         sectionMapping[coff_sym->SectionNumber - 1].ToInt64() + coff_sym->Value
                     );
@@ -613,10 +687,6 @@ namespace CoffLoader
             if (unmanagedData != IntPtr.Zero)
                 Marshal.FreeHGlobal(unmanagedData);
 
-            if (isBeaconObject == false)
-            {
-                CleanUpMemoryAllocations();
-            }
             return retcode;
         }
 
@@ -626,7 +696,7 @@ namespace CoffLoader
             {
                 if (size > 0)
                     memset(ptr, (byte)'\x00', size);
-                Win32.VirtualFreeEx(IntPtr.Zero, ptr, IntPtr.Zero, Win32.AllocationType.Release);
+                Win32.VirtualFree(ptr, IntPtr.Zero, Win32.AllocationType.Release);
             }
             catch (Exception e)
             {
