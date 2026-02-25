@@ -179,6 +179,10 @@ namespace CoffLoader
 
         /* Most common from the looks of it, just 32-bit relative address from the byte following the relocation */
         public static int IMAGE_REL_AMD64_REL32 = 0x0004;
+        public static int IMAGE_REL_AMD64_REL32_1 = 0x0005;
+        public static int IMAGE_REL_AMD64_REL32_2 = 0x0006;
+        public static int IMAGE_REL_AMD64_REL32_3 = 0x0007;
+        public static int IMAGE_REL_AMD64_REL32_4 = 0x0008;
         public static int IMAGE_REL_AMD64_REL32_5 = 0x0009;
 
         [DllImport("kernel32.dll", SetLastError = true)]
@@ -215,6 +219,12 @@ namespace CoffLoader
             IntPtr dwSize,
             AllocationType dwFreeType
         );
+
+        [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
+        public static extern bool VirtualFree(IntPtr lpAddress, IntPtr dwSize, AllocationType dwFreeType);
+
+        [DllImport("kernel32.dll")]
+        public static extern IntPtr GetCurrentProcess();
 
         [DllImport("kernel32.dll")]
         public static extern IntPtr GetModuleHandle(string lpModuleName);
