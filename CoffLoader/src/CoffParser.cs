@@ -185,7 +185,7 @@ namespace CoffLoader
                 sectionMapping = beaconSectionMapping;
                 beaconFunctionMapping = Win32.VirtualAlloc(
                     IntPtr.Zero,
-                    2048,
+                    8192,
                     (uint)(
                         Win32.AllocationType.Commit
                         | Win32.AllocationType.Reserve
@@ -195,7 +195,7 @@ namespace CoffLoader
                 );
                 coffFunctionMapping = Win32.VirtualAlloc(
                     IntPtr.Zero,
-                    2048,
+                    8192,
                     (uint)(
                         Win32.AllocationType.Commit
                         | Win32.AllocationType.Reserve
@@ -530,7 +530,7 @@ namespace CoffLoader
                                 BitConverter.GetBytes(a - b),
                                 sizeof(uint)
                             );
-                            if (functionMappingCount >= 256)
+                            if (functionMappingCount >= 1024)
                             {
                                 Console.WriteLine("functionMapping overflow: too many external symbols");
                                 retcode = 1;
@@ -570,7 +570,7 @@ namespace CoffLoader
                                 BitConverter.GetBytes((int)(a - b)),
                                 sizeof(uint)
                             );
-                            if (functionMappingCount >= 256)
+                            if (functionMappingCount >= 1024)
                             {
                                 Console.WriteLine("functionMapping overflow: too many external symbols");
                                 retcode = 1;
@@ -713,9 +713,9 @@ namespace CoffLoader
             foreach (IntPtr ptr in coffSectionMapping)
                 ZeroAndFree(ptr, 0);
             if (beaconFunctionMapping != IntPtr.Zero)
-                ZeroAndFree(beaconFunctionMapping, 2048);
+                ZeroAndFree(beaconFunctionMapping, 8192);
             if (coffFunctionMapping != IntPtr.Zero)
-                ZeroAndFree(coffFunctionMapping, 2048);
+                ZeroAndFree(coffFunctionMapping, 8192);
             return 0;
         }
 
