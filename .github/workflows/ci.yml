@@ -33,10 +33,6 @@ jobs:
       - name: Verify gcc is on PATH
         run: gcc --version
 
-      - name: Install .NET Framework 4.0 targeting pack
-        shell: pwsh
-        run: choco install netfx-4.0.3-devpack -y --no-progress
-
       - name: Build (Release)
         run: python Scripts/build.py
 

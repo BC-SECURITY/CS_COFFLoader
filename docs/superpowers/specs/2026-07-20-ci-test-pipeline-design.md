@@ -26,8 +26,26 @@ Two new, additive pieces:
   runs `Scripts/build.py` (Release) and then `tests/run_tests.py`, triggered on
   push to `main` and on pull requests targeting `main`.
 
-Nothing in the existing build scripts, `CoffLoader/`, or `beacon_object/` is
-modified.
+Nothing in the existing build scripts or `beacon_object/` is modified.
+
+**Deviation (discovered via the first real CI runs, not anticipated at design
+time):** `CoffLoader/CoffLoader.csproj` gained one build-time-only
+`PackageReference` to `Microsoft.NETFramework.ReferenceAssemblies.net40`
+(`PrivateAssets=All`), and the now-empty, unused `CoffLoader/packages.config`
+was removed. `windows-latest` ships a modern dotnet SDK with no
+`.NETFramework,Version=v4.0` reference assemblies installed, and the
+chocolatey-packaged `.NET Framework 4.0` devpack installer (a circa-2010
+standalone `.exe`) fails outright (exit 5100) on the runner's current Windows
+Server image — installing it is not viable at all, not just unverified. The
+NuGet reference-assemblies package is Microsoft's own documented fix for
+exactly this "old target framework, no legacy devpack available on this OS"
+scenario: it supplies the reference assemblies as ordinary NuGet content, so
+no installer ever runs. It does not change `TargetFrameworkVersion`, does not
+become a dependency of the built binary, and has no runtime effect — it only
+affects what's available at compile time in CI (and for any other machine
+that restores this project without a full legacy VS install). This was
+confirmed with the user before making the change, since it crosses the
+original "`CoffLoader/` untouched" boundary above.
 
 ## Test BOFs (`tests/bofs/*.c`)
 
