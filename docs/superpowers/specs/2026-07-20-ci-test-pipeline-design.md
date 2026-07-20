@@ -18,7 +18,7 @@ available for manual, ad-hoc testing against the external BOF corpus.
 
 Two new, additive pieces:
 
-- `tests/bofs/` — four small C source files, each compiled fresh by MinGW during
+- `tests/bofs/` — five small C source files, each compiled fresh by MinGW during
   the test run, each exercising one code path in `CoffLoader/src/CoffParser.cs`.
 - `tests/run_tests.py` — a test runner that compiles each test BOF, invokes
   `bin/coffloader.exe` against it, and asserts on exit code + stdout content.
@@ -36,13 +36,39 @@ modified.
 | `test_basic.c` | Full load → relocate → execute → output pipeline, zero arguments | `BASIC_OK` |
 | `test_args.c` | Argument marshaling for all format types (`i`/`s`/`z`/`Z`/`b`) — echoes each value back via `BeaconPrintf` | `ARGS_OK:<int>:<short>:<str>:<wstr>:<binlen>` |
 | `test_reloc.c` | Multiple global variables/string constants and cross-function calls within one object, forcing ADDR64/ADDR32NB/REL32(_1–5) relocations and multiple function-mapping-table entries | `RELOC_OK:<computed>` |
-| `test_symbols.c` | All three symbol-resolution tiers: a beacon-internal call, one of the hardcoded Kernel32 functions (e.g. `GetModuleHandleA`), and a dynamically-resolved `LIBRARY$function` call (e.g. `MSVCRT$strlen`) | `SYMBOLS_OK` |
+| `test_symbols.c` | The two symbol-resolution tiers not already incidentally covered by every other test's `BeaconPrintf` call: one of the hardcoded Kernel32 functions (e.g. `GetModuleHandleA`), and a dynamically-resolved `LIBRARY$function` call (e.g. `MSVCRT$strlen`) | `SYMBOLS_OK` |
+| `test_manysyms.c` | Regression coverage for commit `bd1268e` (function-mapping limit raised from 256 to 1024): references 300+ distinct external symbols/relocations, past the old 256-slot limit | `MANYSYMS_OK` |
+
+Note: every test BOF calls `BeaconPrintf`, which is itself resolved through the
+beacon-internal function table (tier 1 of symbol resolution). `test_symbols.c`
+is scoped to the two tiers it uniquely adds — the hardcoded Kernel32 shortlist
+and dynamic `LIBRARY$function` resolution — rather than re-claiming tier 1.
 
 Each BOF prints its marker via `BeaconPrintf`. The test runner greps the marker
 out of `coffloader.exe`'s captured stdout. For `test_args.c`, the runner packs
 a fixed, known set of input values via `beacon_generate.bof_pack()` before
 invocation, and asserts the echoed marker matches those exact values — this
 catches silent argument-marshaling corruption, not just crashes.
+
+**`test_args.c` binary payload constraint:** `CoffParser.cs` sizes the incoming
+argument buffer via `Encoding.Default.GetString(argumentdata).Length` rather
+than the raw byte length — a pre-existing, codepage-dependent quirk unrelated
+to this test pipeline. The fixed binary (`b`) payload used by `test_args.c`
+must therefore be constrained to byte values that round-trip stably under
+`Encoding.Default` (e.g. printable ASCII, avoiding bytes ≥ 0x80), so the test
+doesn't become flaky across differently-configured CI runner locales for
+reasons unrelated to what it's meant to verify.
+
+**`test_reloc.c` coverage verification:** which specific REL32 sub-variant
+(1–5) MinGW emits for a given C construct is a compiler codegen detail, not
+something "multiple globals and cross-function calls" guarantees on its own.
+During implementation, `objdump -r` must be run against the compiled
+`test_reloc.o` at least once to confirm the claimed relocation type codes
+actually appear in the object — otherwise coverage could silently regress
+(e.g. after a MinGW version bump changes codegen) while the marker-based test
+keeps reporting success. This check does not need to run on every CI
+invocation; verifying it holds for the checked-in `test_reloc.c` source is
+sufficient, re-verified if that file is ever edited.
 
 ## Test runner (`tests/run_tests.py`)
 
@@ -52,13 +78,34 @@ For each test BOF:
    resolution approach already used in `Scripts/build.py`'s `find_gcc()`).
 2. Run `bin/coffloader.exe go <bof.o> <hex-args>`, capturing stdout and exit
    code.
-3. Assert exit code is 0 **and** the expected marker (with expected values,
-   where applicable) appears in stdout.
+3. Assert the expected marker (with expected values, where applicable)
+   appears in stdout.
+
+**Exit code is not a meaningful pass/fail signal on its own.** `Program.cs`
+wraps `Main()` and `RunCoff()` in `try/catch` blocks that print an error
+message but never set a nonzero exit code or rethrow — even a logical
+failure inside `parseCOFF` (e.g. `Result == "ERROR"`) still exits 0. In
+practice a nonzero exit code can only mean a hard native crash (e.g. an
+access violation), something no marker string will survive to report either.
+The runner therefore treats these as two distinct failure categories rather
+than one combined assertion:
+
+- **Crash:** nonzero exit code, or the process not returning at all —
+  reported as `CRASH` regardless of what (if anything) was captured on
+  stdout.
+- **Assertion failure:** exit code 0, but the expected marker/values are
+  missing or wrong from stdout — reported as `FAIL`.
+
+Only the marker check determines logical pass/fail; the exit-code check
+exists solely to catch and label crashes distinctly, since the pipeline's
+goal is to catch regressions, and a silent crash is at least as important a
+regression to catch as a wrong marker.
 
 Failures are collected rather than fail-fast (mirroring `tester.py`'s
 per-test try/except pattern), so one failing BOF doesn't prevent the others
 from running. A summary is printed at the end (`N/M passed`), and the script
-exits non-zero if any test failed — this is what fails the CI job.
+exits non-zero if any test failed (`CRASH` or `FAIL`) — this is what fails
+the CI job.
 
 A BOF that fails to *compile* counts as a failed test for that BOF, not a
 runner crash.
