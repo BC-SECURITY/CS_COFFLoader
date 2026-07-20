@@ -10,4 +10,5 @@ Scripts/results/
 CoffLoader/obj/
 *.bin
 *.user
+tests/bofs/build/
 
