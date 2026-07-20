@@ -22,7 +22,7 @@ jobs:
         shell: pwsh
         run: |
           choco install mingw -y --no-progress
-          $gcc = Get-ChildItem -Path "C:\ProgramData\chocolatey\lib\mingw" -Recurse -Filter "gcc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $gcc = Get-ChildItem -Path "C:\ProgramData\mingw64","C:\ProgramData\chocolatey\lib\mingw" -Recurse -Filter "gcc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $gcc) {
             Write-Error "gcc.exe not found after 'choco install mingw'"
             exit 1
