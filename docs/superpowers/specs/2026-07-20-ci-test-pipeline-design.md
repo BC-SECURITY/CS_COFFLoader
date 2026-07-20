@@ -35,7 +35,7 @@ modified.
 |---|---|---|
 | `test_basic.c` | Full load → relocate → execute → output pipeline, zero arguments | `BASIC_OK` |
 | `test_args.c` | Argument marshaling for all format types (`i`/`s`/`z`/`Z`/`b`) — echoes each value back via `BeaconPrintf` | `ARGS_OK:<int>:<short>:<str>:<wstr>:<binlen>` |
-| `test_reloc.c` | Multiple global variables/string constants and cross-function calls within one object, forcing ADDR64/ADDR32NB/REL32(_1–5) relocations and multiple function-mapping-table entries | `RELOC_OK:<computed>` |
+| `test_reloc.c` | Multiple global variables/string constants and cross-function calls within one object, forcing ADDR64/ADDR32NB/REL32 relocations and multiple function-mapping-table entries | `RELOC_OK:<computed>` |
 | `test_symbols.c` | The two symbol-resolution tiers not already incidentally covered by every other test's `BeaconPrintf` call: one of the hardcoded Kernel32 functions (e.g. `GetModuleHandleA`), and a dynamically-resolved `LIBRARY$function` call (e.g. `MSVCRT$strlen`) | `SYMBOLS_OK` |
 | `test_manysyms.c` | Regression coverage for commit `bd1268e` (function-mapping limit raised from 256 to 1024): references 300+ distinct external symbols/relocations, past the old 256-slot limit | `MANYSYMS_OK` |
 
@@ -59,16 +59,28 @@ must therefore be constrained to byte values that round-trip stably under
 doesn't become flaky across differently-configured CI runner locales for
 reasons unrelated to what it's meant to verify.
 
-**`test_reloc.c` coverage verification:** which specific REL32 sub-variant
-(1–5) MinGW emits for a given C construct is a compiler codegen detail, not
+**`test_reloc.c` coverage verification:** which specific relocation types
+MinGW emits for a given C construct is a compiler codegen detail, not
 something "multiple globals and cross-function calls" guarantees on its own.
-During implementation, `objdump -r` must be run against the compiled
-`test_reloc.o` at least once to confirm the claimed relocation type codes
-actually appear in the object — otherwise coverage could silently regress
-(e.g. after a MinGW version bump changes codegen) while the marker-based test
-keeps reporting success. This check does not need to run on every CI
-invocation; verifying it holds for the checked-in `test_reloc.c` source is
-sufficient, re-verified if that file is ever edited.
+This was verified empirically during design (GCC 13, `x86_64-w64-mingw32-gcc`,
+`-O0`) by compiling candidate source and inspecting the raw COFF relocation
+table: cross-function calls and `.rdata`/`.data` references reliably produce
+`IMAGE_REL_AMD64_REL32` (type 4), and a global array of string-literal
+pointers produces `IMAGE_REL_AMD64_ADDR64` (type 1) entries in `.data`.
+`IMAGE_REL_AMD64_ADDR32NB` (type 3) is also present, generated automatically
+in `.pdata` (x64 SEH unwind info) by the compiler for every function.
+
+The REL32_1–5 sub-variants (types 5–9) were *not* reproducible: byte/word/
+dword/qword immediate stores to global variables, tried specifically to
+force them, all still emit plain REL32. `CoffParser.cs`'s REL32_1–5 branch
+(lines 541–580) is therefore accepted as untested by this pipeline — hitting
+it would require hand-crafted assembly or a different/older compiler
+toolchain, which is out of scope. This is a known, accepted gap, not an
+oversight.
+
+Because relocation-type codegen can shift with compiler versions, `objdump -r`
+should be re-run against `test_reloc.o` if `test_reloc.c` is ever edited, to
+confirm the ADDR64/ADDR32NB/REL32 coverage claimed above still holds.
 
 ## Test runner (`tests/run_tests.py`)
 
