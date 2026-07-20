@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install MinGW-w64
+        shell: pwsh
+        run: |
+          choco install mingw -y --no-progress
+          $gcc = Get-ChildItem -Path "C:\ProgramData\chocolatey\lib\mingw" -Recurse -Filter "gcc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $gcc) {
+            Write-Error "gcc.exe not found after 'choco install mingw'"
+            exit 1
+          }
+          Write-Host "Found gcc at $($gcc.FullName)"
+          Add-Content -Path $env:GITHUB_PATH -Value $gcc.Directory.FullName
+
+      - name: Verify gcc is on PATH
+        run: gcc --version
+
+      - name: Build (Release)
+        run: python Scripts/build.py
+
+      - name: Run tests
+        run: python tests/run_tests.py
