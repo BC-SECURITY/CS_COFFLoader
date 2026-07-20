@@ -508,10 +508,19 @@ namespace CoffLoader
                         );
                         Debug.WriteLine(String.Format("offset 0x{0:X}, functionName {1}", offset, functionName));
 
+                        if (!isBeaconObject)
+                        {
+                            Console.WriteLine($"[DIAG]   Resolving external symbol: '{functionName}'");
+                        }
+
                         void* funcptrlocation = process_symbol(functionName);
                         if (funcptrlocation == null && isBeaconObject == false)
                         {
                             Debug.WriteLine("Failed to resolve symbol! Fatal!\n");
+                            if (!isBeaconObject)
+                            {
+                                Console.WriteLine($"[ERR] Symbol resolution failed for: '{functionName}'");
+                            }
                             retcode = 1;
                             goto cleanup;
                         }
