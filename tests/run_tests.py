@@ -38,7 +38,10 @@ def compile_bof(gcc_cmd, source_name):
 def run_bof(bof_path, hex_args):
     cmd = [str(COFFLOADER_EXE), "go", str(bof_path), hex_args]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    return result.returncode, result.stdout
+    output = result.stdout
+    if result.stderr:
+        output += f"\n[STDERR]\n{result.stderr}"
+    return result.returncode, output
 
 
 TEST_CASES = [

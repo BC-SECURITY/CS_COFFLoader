@@ -36,5 +36,15 @@ jobs:
       - name: Build (Release)
         run: python Scripts/build.py
 
+      - name: Verify coffloader.exe exists and is executable
+        shell: pwsh
+        run: |
+          if (!(Test-Path bin/coffloader.exe)) {
+            Write-Error "bin/coffloader.exe not found after build"
+            exit 1
+          }
+          Write-Host "coffloader.exe exists. File info:"
+          Get-Item bin/coffloader.exe | Format-List -Property Name,Length,LastWriteTime
+
       - name: Run tests
         run: python tests/run_tests.py
