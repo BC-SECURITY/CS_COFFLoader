@@ -318,8 +318,17 @@ namespace CoffLoader
                     );
                     Debug.WriteLine(StructHelper.PrintStruct(coff_sym));
 
+                    if (!isBeaconObject)
+                    {
+                        Console.WriteLine($"[DIAG] Reloc {reloccount}: type={coff_reloc->Type} symidx={coff_reloc->SymbolTableIndex} va=0x{coff_reloc->VirtualAddress:X}");
+                    }
+
                     if (coff_sym->value_u[0] != 0)
                     {
+                        if (!isBeaconObject)
+                        {
+                            Console.WriteLine($"[DIAG]   -> coff_sym->value_u[0]={coff_sym->value_u[0]}");
+                        }
                         if (coff_reloc->Type == Win32.IMAGE_REL_AMD64_ADDR64) // Type == 1 relocation is the 64-bit VA of the relocation target
                         {
                             ulong longoffsetvalue = 0;
