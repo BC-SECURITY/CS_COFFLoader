@@ -223,6 +223,11 @@ namespace CoffLoader
             coff_header = (COFF_FILE_HEADER*)coff_data;
             Debug.WriteLine(StructHelper.PrintStruct(coff_header));
 
+            if (!isBeaconObject)
+            {
+                Console.WriteLine($"[DIAG] COFF_PARSE_START: machine=0x{coff_header->Machine:X} sections={coff_header->NumberOfSections}");
+            }
+
             for (counter = 0; counter < coff_header->NumberOfSections; counter++)
             {
                 Debug.WriteLine(string.Format(
@@ -277,6 +282,11 @@ namespace CoffLoader
                 sectionMapping.Add(tmpAddr);
             }
 
+            if (!isBeaconObject)
+            {
+                Console.WriteLine($"[DIAG] COFF_SECTIONS_DONE: allocated={sectionMapping.Count}");
+            }
+
             /* Start parsing the relocations, and *hopefully* handle them correctly. */
             for (counter = 0; counter < coff_header->NumberOfSections; counter++)
             {
@@ -285,6 +295,11 @@ namespace CoffLoader
                     coff_data + sizeof(COFF_FILE_HEADER) + (counter * sizeof(COFF_SECT))
                 );
                 Debug.WriteLine(StructHelper.PrintStruct(coff_sect));
+
+                if (!isBeaconObject)
+                {
+                    Console.WriteLine($"[DIAG] Section {counter}: {coff_sect->NumberOfRelocations} relocations");
+                }
 
                 for (reloccount = 0; reloccount < coff_sect->NumberOfRelocations; reloccount++)
                 {
@@ -326,6 +341,10 @@ namespace CoffLoader
                             if (coff_sym->SectionNumber == 0 || coff_sym->SectionNumber > sectionMapping.Count)
                             {
                                 Debug.WriteLine($"Invalid SectionNumber: {coff_sym->SectionNumber}");
+                                if (!isBeaconObject)
+                                {
+                                    Console.WriteLine($"[ERR] ADDR64: SectionNumber {coff_sym->SectionNumber} invalid (max={sectionMapping.Count})");
+                                }
                                 retcode = 1;
                                 goto cleanup;
                             }
