@@ -217,6 +217,17 @@ public static class BeaconCallbacksTests
         Eq("first", c.Finish()[0].Name);
     }
 
+    static void DefaultCapFitsDefaultListener()
+    {
+        // Sharpire base64s the result again, so a file costs ~16/9 of its size on
+        // the wire; 16 MiB of files is ~28.4 MiB, under the 32 MiB MaxContentLength.
+        Eq(16L * 1024 * 1024, BofFileCollector.DefaultMaxTotalBytes);
+        BofFileCollector c = new BofFileCollector();
+        string note = c.Handle(FILE, Open(1, 17 * 1024 * 1024, "big.dmp"));
+        Contains("MaxContentLength", note);
+        Contains("save it on the target", note);
+    }
+
     static void CapRejectsOversizedDeclaredFile()
     {
         BofFileCollector c = new BofFileCollector(1000);

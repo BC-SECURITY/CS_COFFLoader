@@ -29,7 +29,13 @@ namespace CoffLoader
         public const int CALLBACK_FILE_WRITE = 0x08;
         public const int CALLBACK_FILE_CLOSE = 0x09;
 
-        public const long DefaultMaxTotalBytes = 100L * 1024 * 1024;
+        // A task result must fit one listener request (MaxContentLength, 32 MiB by
+        // default). Sharpire base64s the result again, so files cost ~16/9 of their
+        // size on the wire: 16 MiB of files is ~28.4 MiB, leaving room for the text.
+        public const long DefaultMaxTotalBytes = 16L * 1024 * 1024;
+
+        private const string CapAdvice =
+            " (a task result must fit the listener's MaxContentLength; save it on the target instead)";
 
         private sealed class PendingFile
         {
@@ -100,7 +106,7 @@ namespace CoffLoader
             {
                 dropped.Add(id);
                 return Note("dropping " + name + ": " + size + " bytes would exceed the "
-                    + maxTotalBytes + "-byte limit");
+                    + maxTotalBytes + "-byte limit" + CapAdvice);
             }
             PendingFile file = new PendingFile();
             file.Name = name;
@@ -126,7 +132,7 @@ namespace CoffLoader
                 open.Remove(id);
                 dropped.Add(id);
                 totalBytes -= file.Buffer.Length;
-                return Note("dropping " + file.Name + ": exceeded the " + maxTotalBytes + "-byte limit");
+                return Note("dropping " + file.Name + ": exceeded the " + maxTotalBytes + "-byte limit" + CapAdvice);
             }
             file.Buffer.Write(data, 4, chunk);
             totalBytes += chunk;
@@ -161,7 +167,7 @@ namespace CoffLoader
                 return Note("screenshot header malformed (" + data.Length + " bytes)");
             if (totalBytes + jpgLen > maxTotalBytes)
                 return Note("dropping screenshot: " + jpgLen + " bytes would exceed the "
-                    + maxTotalBytes + "-byte limit");
+                    + maxTotalBytes + "-byte limit" + CapAdvice);
             byte[] jpg = new byte[jpgLen];
             Buffer.BlockCopy(data, offset, jpg, 0, jpgLen);
             offset += jpgLen;
