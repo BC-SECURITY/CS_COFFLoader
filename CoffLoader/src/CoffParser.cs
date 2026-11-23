@@ -746,7 +746,35 @@ namespace CoffLoader
                 );
 
             char* output = foo(&output_size);
-            return new string((sbyte*)output);
+            if (output == null)
+                return "";
+            string text = BeaconOutputHook.ReadOutputText(new IntPtr(output), output_size);
+            // The C side hands the buffer over (BeaconGetOutputData resets its pointer). It
+            // came from MSVCRT$realloc in the compat object, so it must go back to msvcrt's
+            // free, not Marshal.FreeHGlobal. Freed even when empty: realloc(NULL, 1) for a
+            // zero-length BeaconOutput still allocates.
+            msvcrt_free(new IntPtr(output));
+            return text;
+        }
+
+        [DllImport("msvcrt.dll", EntryPoint = "free", CallingConvention = CallingConvention.Cdecl)]
+        private static extern void msvcrt_free(IntPtr ptr);
+
+        // Replaces the C BeaconOutput entry with the managed hook, so BOFs bind to it.
+        // Call after the beacon compatibility object is parsed and before the BOF is.
+        public static bool InstallBeaconOutputHook()
+        {
+            uint hash = hash_djb(Encoding.Default.GetBytes("BeaconOutput"));
+            for (int i = 0; i < BeaconInternalMapping.Count; i++)
+            {
+                if (BeaconInternalMapping[i].hash == hash)
+                {
+                    IntPtr hookPtr = BeaconOutputHook.Install(new IntPtr(BeaconInternalMapping[i].function));
+                    BeaconInternalMapping[i] = new BEACON_FUNCTION(hash, hookPtr.ToPointer());
+                    return true;
+                }
+            }
+            return false;
         }
     }
 }
