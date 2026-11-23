@@ -2,7 +2,7 @@
 // with plain mcs and runs under mono off Windows: Tests/run_tests.sh
 //
 // Not covered here: CoffParser.cs and Program.cs are not built by this run, so the
-// output buffer free and the hook's install order are covered only by a live BOF run
+// output buffer free and the hook's install into the function table are covered only by a live BOF run
 // on Windows (ScreenshotBOF and a download BOF, checking the returned frames decode to
 // valid files). The length-aware read and NUL strip live in ReadOutputText, tested below.
 using System;
