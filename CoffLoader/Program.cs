@@ -31,7 +31,7 @@ namespace CoffLoader
 
                 Console.WriteLine(result);
                 string output = BeaconGetOutputData();
-                Console.WriteLine(output);
+                Console.WriteLine(output + BeaconGetFileFrames());
             }
             catch (Exception ex)
             {
@@ -61,6 +61,9 @@ namespace CoffLoader
 
                 Debug.WriteLine("************************ BEACON PROCESSING DONE ***********************");
 
+                if (!CoffParser.InstallBeaconOutputHook())
+                    Debug.WriteLine("BeaconOutput not found in the beacon compat object; file callbacks disabled");
+
                 // Parse the COFF file
                 if (CoffParser.parseCOFF(functionname, coff_data, coff_data.Length, arg_data, arg_data.Length) == 1)
                 {
@@ -82,6 +85,13 @@ namespace CoffLoader
             }
 
             return Result;
+        }
+
+        // Files the BOF returned via CALLBACK_FILE*/CALLBACK_SCREENSHOT, as the framed
+        // text the Empire server extracts. Empty when there are none.
+        public static string BeaconGetFileFrames()
+        {
+            return BofFileCollector.FormatFrames(BeaconOutputHook.TakeFiles());
         }
 
         public static int BeaconGetOutputData_Size()

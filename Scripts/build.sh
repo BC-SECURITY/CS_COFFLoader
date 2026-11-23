@@ -14,10 +14,10 @@ echo "Building the Executable"
 if command -v mcs >/dev/null 2>&1; then
     if [ $# -eq 0 ]; then
         echo 'Building Release'
-        mcs -unsafe -platform:x64 -out:bin/coffloader.exe CoffLoader/Program.cs CoffLoader/src/CoffParser.cs CoffLoader/src/CoffStructs.cs
+        mcs -unsafe -platform:x64 -out:bin/coffloader.exe CoffLoader/Program.cs CoffLoader/src/CoffParser.cs CoffLoader/src/CoffStructs.cs CoffLoader/src/BeaconCallbacks.cs
     else
         echo 'Building DEBUG'
-        mcs -unsafe -platform:x64 -out:bin/coffloader.exe -d:DEBUG CoffLoader/Program.cs CoffLoader/src/CoffParser.cs CoffLoader/src/CoffStructs.cs
+        mcs -unsafe -platform:x64 -out:bin/coffloader.exe -d:DEBUG CoffLoader/Program.cs CoffLoader/src/CoffParser.cs CoffLoader/src/CoffStructs.cs CoffLoader/src/BeaconCallbacks.cs
     fi
     if [ $? -ne 0 ]; then echo "ERROR: mcs compilation failed"; exit 1; fi
 elif command -v cmd.exe >/dev/null 2>&1; then
