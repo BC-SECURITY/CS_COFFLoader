@@ -2,9 +2,9 @@
 // with plain mcs and runs under mono off Windows: Tests/run_tests.sh
 //
 // Not covered here: CoffParser.cs and Program.cs are not built by this run, so the
-// length-aware output read, the NUL strip, the output buffer free and the hook's
-// install order are covered only by a live BOF run on Windows (ScreenshotBOF and a
-// download BOF, checking the returned frames decode to valid files).
+// output buffer free and the hook's install order are covered only by a live BOF run
+// on Windows (ScreenshotBOF and a download BOF, checking the returned frames decode to
+// valid files). The length-aware read and NUL strip live in ReadOutputText, tested below.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -165,6 +165,71 @@ public static class BeaconCallbacksTests
         IsNull(c.Handle(FILE, Open(1, 1, "a")));  // same id reusable after Finish
     }
 
+    static void FinishResetsByteBudgetAndDroppedIds()
+    {
+        BofFileCollector c = new BofFileCollector(1);
+        c.Handle(FILE, Open(1, 1, "a"));
+        c.Handle(WRITE, Chunk(1, Ascii("A")));
+        c.Handle(CLOSE, Close(1));
+        Contains("would exceed", c.Handle(FILE, Open(2, 1, "b")));  // budget full, id 2 dropped
+        c.Finish();
+        IsNull(c.Handle(FILE, Open(2, 1, "b")));  // budget and dropped ids both reset
+        IsNull(c.Handle(WRITE, Chunk(2, Ascii("B"))));
+        IsNull(c.Handle(CLOSE, Close(2)));
+        Eq(1, c.Finish().Count);
+    }
+
+    static void ExactlyAtCapIsAccepted()
+    {
+        BofFileCollector c = new BofFileCollector(10);
+        IsNull(c.Handle(FILE, Open(1, 10, "ten.bin")));
+        IsNull(c.Handle(WRITE, Chunk(1, Ascii("0123456789"))));
+        IsNull(c.Handle(CLOSE, Close(1)));
+        Eq(1, c.Finish().Count);
+        IsNull(c.Handle(SHOT, Cat(LE32(10), FakeJpeg(10))));
+        Eq(1, c.Finish().Count);
+    }
+
+    static void OverDeclaredCloseIsPartialWithNote()
+    {
+        BofFileCollector c = new BofFileCollector();
+        c.Handle(FILE, Open(9, 2, "long.bin"));
+        c.Handle(WRITE, Chunk(9, Ascii("abc")));
+        Contains("3 of 2 bytes", c.Handle(CLOSE, Close(9)));
+        True(c.Finish()[0].Partial);
+    }
+
+    static void DroppedIdBookkeeping()
+    {
+        BofFileCollector c = new BofFileCollector(5);
+        Contains("would exceed", c.Handle(FILE, Open(1, 50, "big")));
+        Contains("opened twice", c.Handle(FILE, Open(1, 1, "again")));  // still dropped
+        IsNull(c.Handle(CLOSE, Close(1)));
+        IsNull(c.Handle(FILE, Open(1, 1, "reuse")));  // closed drop frees the id
+        c.Handle(WRITE, Chunk(1, Ascii("x")));
+        IsNull(c.Handle(CLOSE, Close(1)));
+        Eq("reuse", c.Finish()[0].Name);
+    }
+
+    static void NoteEscapesControlCharactersInNames()
+    {
+        BofFileCollector c = new BofFileCollector(1);
+        string note = c.Handle(FILE, Open(1, 50, "x\n[EMPIRE-BOF-FILE v1] {}"));
+        Contains("x\\u000a[EMPIRE-BOF-FILE v1]", note);
+        Eq(note.Length - 1, note.IndexOf('\n'));  // only the terminating newline
+    }
+
+    static void ReadOutputTextKeepsTextPastNuls()
+    {
+        byte[] raw = Ascii("ab\0cd\0");  // embedded NUL, then a strlen+1 trailing NUL
+        IntPtr p = Marshal.AllocHGlobal(raw.Length);
+        Marshal.Copy(raw, 0, p, raw.Length);
+        Eq("abcd", BeaconOutputHook.ReadOutputText(p, raw.Length));
+        Eq("", BeaconOutputHook.ReadOutputText(p, 0));
+        Marshal.FreeHGlobal(p);
+        Eq("", BeaconOutputHook.ReadOutputText(IntPtr.Zero, 4));
+    }
+
     static void ScreenshotBlob()
     {
         BofFileCollector c = new BofFileCollector();
@@ -229,8 +294,8 @@ public static class BeaconCallbacksTests
     static void DefaultCapFitsDefaultListener()
     {
         // Sharpire base64s the result again, so a file costs ~16/9 of its size on
-        // the wire; 16 MiB of files is ~28.4 MiB, under the 32 MiB MaxContentLength.
-        Eq(16L * 1024 * 1024, BofFileCollector.DefaultMaxTotalBytes);
+        // the wire; that must stay under the 32 MiB MaxContentLength.
+        True(BofFileCollector.DefaultMaxTotalBytes * 16 / 9 < 32L * 1024 * 1024);
         BofFileCollector c = new BofFileCollector();
         string note = c.Handle(FILE, Open(1, 17 * 1024 * 1024, "big.dmp"));
         Contains("MaxContentLength", note);
@@ -338,7 +403,7 @@ public static class BeaconCallbacksTests
         Eq("", BofFileCollector.FormatFrames(new BofFile[0]));
     }
 
-    static void FrameHeaderEscapesNewlinesAndNulls()
+    static void FrameHeaderEscapesNewlinesAndNullFields()
     {
         // A newline in a name must not break the one-line header the server parses.
         BofFile f = new BofFile();
@@ -446,6 +511,19 @@ public static class BeaconCallbacksTests
         Call(hook, 0x00, Ascii("text"));
         Eq(2, throwingCCalls);  // the forward, then the attempt to report it
         BeaconOutputHook.Install(Marshal.GetFunctionPointerForDelegate(fakeC));
+    }
+
+    static void HookNotesNegativeLengthFileCallback()
+    {
+        fakeCText.Length = 0; fakeCTypes.Clear();
+        IntPtr hookPtr = BeaconOutputHook.Install(Marshal.GetFunctionPointerForDelegate(fakeC));
+        BeaconOutputHook.BeaconOutputFn hook = (BeaconOutputHook.BeaconOutputFn)Marshal.GetDelegateForFunctionPointer(hookPtr, typeof(BeaconOutputHook.BeaconOutputFn));
+        IntPtr p = Marshal.AllocHGlobal(4);
+        hook(WRITE, p, -1);
+        hook(0x00, p, -1);  // text with a negative length: dropped, as the C side would mishandle it
+        Marshal.FreeHGlobal(p);
+        Contains("negative length -1", fakeCText.ToString());
+        Eq(1, fakeCTypes.Count);
     }
 
     static void InstallResetsCollector()

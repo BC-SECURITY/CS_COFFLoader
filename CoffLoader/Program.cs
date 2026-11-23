@@ -38,7 +38,7 @@ namespace CoffLoader
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[!] Could not return the BOF's files: {ex.Message}");
+                    Console.WriteLine($"[!] Could not return the BOF's files: {ex.GetType().Name}: {ex.Message}");
                 }
             }
             catch (Exception ex)
@@ -50,10 +50,16 @@ namespace CoffLoader
         public static string RunCoff(string functionName, string coffData, string argDataHex)
         {
             string Result = "";
+            string hookWarning = "";
 
             try
             {
                 Debug.WriteLine("Calling RunCoff()");
+                // Drop anything an earlier run left behind, so no path below can return
+                // another task's files or text.
+                BeaconOutputHook.TakeFiles();
+                beaconOutputData = "";
+                beaconOutputData_sz = 0;
 
                 byte[] functionname = Encoding.ASCII.GetBytes(functionName);
                 byte[] coff_data = Decode(coffData);
@@ -69,7 +75,6 @@ namespace CoffLoader
 
                 Debug.WriteLine("************************ BEACON PROCESSING DONE ***********************");
 
-                string hookWarning = "";
                 if (!CoffParser.InstallBeaconOutputHook())
                     hookWarning = "[!] BeaconOutput not found in the beacon compat object; file callbacks disabled\n";
 
@@ -92,7 +97,7 @@ namespace CoffLoader
             {
                 Debug.WriteLine($"Exception: '{e}'");
                 Result = "ERROR";
-                beaconOutputData = $"RunCoff exception: {e.GetType().Name}: {e.Message}";
+                beaconOutputData = hookWarning + $"RunCoff exception: {e.GetType().Name}: {e.Message}";
                 beaconOutputData_sz = beaconOutputData.Length;
             }
 

@@ -746,14 +746,15 @@ namespace CoffLoader
                 );
 
             char* output = foo(&output_size);
-            if (output == null || output_size <= 0)
+            if (output == null)
                 return "";
-            // Length-aware: a NUL inside the output must not truncate it. The C side hands
-            // ownership of the buffer over (BeaconGetOutputData resets its pointer).
-            string text = new string((sbyte*)output, 0, output_size, Encoding.Default);
+            string text = BeaconOutputHook.ReadOutputText(new IntPtr(output), output_size);
+            // The C side hands the buffer over (BeaconGetOutputData resets its pointer). It
+            // came from MSVCRT$realloc in the compat object, so it must go back to msvcrt's
+            // free, not Marshal.FreeHGlobal. Freed even when empty: realloc(NULL, 1) for a
+            // zero-length BeaconOutput still allocates.
             msvcrt_free(new IntPtr(output));
-            // BOFs that send strlen+1 bytes leave a NUL behind; it has no place in text.
-            return text.Replace("\0", "");
+            return text;
         }
 
         [DllImport("msvcrt.dll", EntryPoint = "free", CallingConvention = CallingConvention.Cdecl)]

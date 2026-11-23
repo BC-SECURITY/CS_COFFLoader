@@ -12,8 +12,8 @@ namespace CoffLoader
         public string Name;
         public string Kind;          // "file" or "screenshot"
         public byte[] Data;
-        public bool Partial;         // closed short of its declared size, or never closed
-        public long DeclaredSize;    // -1 when the callback carries no declared size
+        public bool Partial;         // byte count differs from the declared size, or never closed
+        public long DeclaredSize;
         public int Session = -1;     // screenshot only
         public string User;          // screenshot only
         public string Title;         // screenshot only
@@ -256,13 +256,22 @@ namespace CoffLoader
             return Encoding.Default.GetString(data, offset, count);
         }
 
+        // Names in notes are BOF-supplied; control characters are escaped so a name
+        // cannot start a new line that looks like a frame marker.
         private static string Note(string message)
         {
-            return "[!] BOF file callback: " + message + "\n";
+            StringBuilder sb = new StringBuilder("[!] BOF file callback: ");
+            foreach (char c in message)
+            {
+                if (c < 0x20) sb.Append("\\u").Append(((int)c).ToString("x4"));
+                else sb.Append(c);
+            }
+            return sb.Append('\n').ToString();
         }
 
-        // The framed text the Empire server extracts from RunCOFF output. The format
-        // is a contract with the server's parser; bump the version tag on any change.
+        // The framed text Program.BeaconGetFileFrames() returns after the BOF's text
+        // output. The format is a contract with the Empire server's parser; bump the
+        // version tag on any change.
         public const string FrameStart = "[EMPIRE-BOF-FILE v1] ";
         public const string FrameEnd = "[/EMPIRE-BOF-FILE]";
 
@@ -345,8 +354,15 @@ namespace CoffLoader
         {
             try
             {
-                if (data == IntPtr.Zero || len < 0)
+                if (data == IntPtr.Zero)
                     return;
+                if (len < 0)
+                {
+                    if (BofFileCollector.IsFileCallback(type))
+                        WriteText("[!] BOF file callback: dropped a type 0x" + type.ToString("x")
+                            + " callback with negative length " + len + "\n");
+                    return;
+                }
                 if (!BofFileCollector.IsFileCallback(type))
                 {
                     cOutput(type, data, len);
@@ -370,6 +386,17 @@ namespace CoffLoader
                     // Nothing left to report through; swallowing is the only safe option.
                 }
             }
+        }
+
+        // The C output buffer as text. Read by length so an embedded NUL does not cut it
+        // short; NULs themselves are then dropped (BOFs that send strlen+1 bytes leave one).
+        public static string ReadOutputText(IntPtr data, int len)
+        {
+            if (data == IntPtr.Zero || len <= 0)
+                return "";
+            byte[] bytes = new byte[len];
+            Marshal.Copy(data, bytes, 0, len);
+            return Encoding.Default.GetString(bytes).Replace("\0", "");
         }
 
         private static void WriteText(string text)
