@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Diagnostics;
@@ -30,8 +31,15 @@ namespace CoffLoader
                 string result = RunCoff(functionName, coffData, argDataHex);
 
                 Console.WriteLine(result);
-                string output = BeaconGetOutputData();
-                Console.WriteLine(output + BeaconGetFileFrames());
+                Console.WriteLine(BeaconGetOutputData());
+                try
+                {
+                    Console.Write(BeaconGetFileFrames());
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[!] Could not return the BOF's files: {ex.Message}");
+                }
             }
             catch (Exception ex)
             {
@@ -61,20 +69,21 @@ namespace CoffLoader
 
                 Debug.WriteLine("************************ BEACON PROCESSING DONE ***********************");
 
+                string hookWarning = "";
                 if (!CoffParser.InstallBeaconOutputHook())
-                    Debug.WriteLine("BeaconOutput not found in the beacon compat object; file callbacks disabled");
+                    hookWarning = "[!] BeaconOutput not found in the beacon compat object; file callbacks disabled\n";
 
                 // Parse the COFF file
                 if (CoffParser.parseCOFF(functionname, coff_data, coff_data.Length, arg_data, arg_data.Length) == 1)
                 {
                     Result = "ERROR";
-                    beaconOutputData = "parseCOFF failed: 1";
+                    beaconOutputData = hookWarning + "parseCOFF failed: 1";
                     beaconOutputData_sz = beaconOutputData.Length;
                     CoffParser.CleanUpMemoryAllocations();
                 }
                 else
                 {
-                    beaconOutputData = CoffParser.getBeaconOutputData();
+                    beaconOutputData = hookWarning + CoffParser.getBeaconOutputData();
                     beaconOutputData_sz = beaconOutputData.Length;
                     CoffParser.CleanUpMemoryAllocations();
                 }
@@ -82,16 +91,22 @@ namespace CoffLoader
             catch (Exception e)
             {
                 Debug.WriteLine($"Exception: '{e}'");
+                Result = "ERROR";
+                beaconOutputData = $"RunCoff exception: {e.GetType().Name}: {e.Message}";
+                beaconOutputData_sz = beaconOutputData.Length;
             }
 
             return Result;
         }
 
         // Files the BOF returned via CALLBACK_FILE*/CALLBACK_SCREENSHOT, as the framed
-        // text the Empire server extracts. Empty when there are none.
+        // text the Empire server extracts, preceded by a note for each file the BOF
+        // never closed. Empty when there are none.
         public static string BeaconGetFileFrames()
         {
-            return BofFileCollector.FormatFrames(BeaconOutputHook.TakeFiles());
+            string notes;
+            List<BofFile> files = BeaconOutputHook.TakeFiles(out notes);
+            return notes + BofFileCollector.FormatFrames(files);
         }
 
         public static int BeaconGetOutputData_Size()

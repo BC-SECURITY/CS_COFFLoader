@@ -29,9 +29,11 @@ namespace CoffLoader
         public const int CALLBACK_FILE_WRITE = 0x08;
         public const int CALLBACK_FILE_CLOSE = 0x09;
 
-        // A task result must fit one listener request (MaxContentLength, 32 MiB by
-        // default). Sharpire base64s the result again, so files cost ~16/9 of their
-        // size on the wire: 16 MiB of files is ~28.4 MiB, leaving room for the text.
+        // Caps the files from one RunCOFF call. A task result must fit one listener
+        // request (MaxContentLength, 32 MiB by default). Sharpire base64s the result
+        // again, so files cost ~16/9 of their size on the wire: 16 MiB of files is
+        // ~28.4 MiB. Sharpire batches every job's output into one POST, so other
+        // results in the same check-in share that headroom; this cap does not cover them.
         public const long DefaultMaxTotalBytes = 16L * 1024 * 1024;
 
         private const string CapAdvice =
@@ -82,8 +84,22 @@ namespace CoffLoader
         // Completed files plus any still open (flagged partial). Clears the collector.
         public List<BofFile> Finish()
         {
+            string notes;
+            return Finish(out notes);
+        }
+
+        // As Finish(), and notes names each file the BOF never closed ("" when none).
+        public List<BofFile> Finish(out string notes)
+        {
+            StringBuilder sb = new StringBuilder();
             foreach (KeyValuePair<uint, PendingFile> entry in open)
-                finished.Add(ToBofFile(entry.Value, true));
+            {
+                PendingFile file = entry.Value;
+                sb.Append(Note(file.Name + " was never closed; returning " + file.Buffer.Length
+                    + " of " + file.DeclaredSize + " bytes"));
+                finished.Add(ToBofFile(file, true));
+            }
+            notes = sb.ToString();
             open.Clear();
             dropped.Clear();
             List<BofFile> result = new List<BofFile>(finished);
@@ -315,20 +331,45 @@ namespace CoffLoader
             return collector.Finish();
         }
 
+        public static List<BofFile> TakeFiles(out string notes)
+        {
+            return collector.Finish(out notes);
+        }
+
+        // Called from native BOF code. A managed exception must not unwind through BOF
+        // frames (they have no unwind info), so the body never lets one escape.
+        // Limits: an AccessViolationException from Marshal.Copy is a corrupted-state
+        // exception and is not caught here, and a ThreadAbortException re-raises at the
+        // end of the catch.
         private static void Hook(int type, IntPtr data, int len)
         {
-            if (data == IntPtr.Zero || len < 0)
-                return;
-            if (!BofFileCollector.IsFileCallback(type))
+            try
             {
-                cOutput(type, data, len);
-                return;
+                if (data == IntPtr.Zero || len < 0)
+                    return;
+                if (!BofFileCollector.IsFileCallback(type))
+                {
+                    cOutput(type, data, len);
+                    return;
+                }
+                byte[] bytes = new byte[len];
+                Marshal.Copy(data, bytes, 0, len);
+                string note = collector.Handle(type, bytes);
+                if (note != null)
+                    WriteText(note);
             }
-            byte[] bytes = new byte[len];
-            Marshal.Copy(data, bytes, 0, len);
-            string note = collector.Handle(type, bytes);
-            if (note != null)
-                WriteText(note);
+            catch (Exception e)
+            {
+                try
+                {
+                    WriteText("[!] BOF file callback: dropped a type 0x" + type.ToString("x")
+                        + " callback of " + len + " bytes: " + e.GetType().Name + ": " + e.Message + "\n");
+                }
+                catch (Exception)
+                {
+                    // Nothing left to report through; swallowing is the only safe option.
+                }
+            }
         }
 
         private static void WriteText(string text)

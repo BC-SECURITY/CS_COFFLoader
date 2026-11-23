@@ -752,7 +752,8 @@ namespace CoffLoader
             // ownership of the buffer over (BeaconGetOutputData resets its pointer).
             string text = new string((sbyte*)output, 0, output_size, Encoding.Default);
             msvcrt_free(new IntPtr(output));
-            return text;
+            // BOFs that send strlen+1 bytes leave a NUL behind; it has no place in text.
+            return text.Replace("\0", "");
         }
 
         [DllImport("msvcrt.dll", EntryPoint = "free", CallingConvention = CallingConvention.Cdecl)]

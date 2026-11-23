@@ -1,5 +1,10 @@
 // Decoder tests for BeaconCallbacks.cs. Self-contained runner (no NUnit) so it builds
 // with plain mcs and runs under mono off Windows: Tests/run_tests.sh
+//
+// Not covered here: CoffParser.cs and Program.cs are not built by this run, so the
+// length-aware output read, the NUL strip, the output buffer free and the hook's
+// install order are covered only by a live BOF run on Windows (ScreenshotBOF and a
+// download BOF, checking the returned frames decode to valid files).
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -53,7 +58,8 @@ public static class BeaconCallbacksTests
 
     static void ScreenshotBofDownloadSingleChunk()
     {
-        // ScreenshotBOF: fileId = rand() <= 0x7FFF, so the header starts 00 00 (the truncation trigger)
+        // ScreenshotBOF: fileId = rand() <= 0x7FFF, so the header starts 00 00. That NUL
+        // used to cut the C-buffer read short; this only checks the decoder handles it.
         BofFileCollector c = new BofFileCollector();
         byte[] jpg = FakeJpeg(50000);
         IsNull(c.Handle(FILE, Open(0x1234, (uint)jpg.Length, "screenshot.jpg")));
@@ -162,7 +168,10 @@ public static class BeaconCallbacksTests
     static void ScreenshotBlob()
     {
         BofFileCollector c = new BofFileCollector();
-        byte[] jpg = FakeJpeg(807663);  // the size task 8 leaked (EF 52 0C)
+        // 807663 bytes encodes as EF 52 0C 00: a NUL in the length, as seen live. This
+        // checks the decoder reads the LE32 length; the old C-buffer truncation is not
+        // reachable from here.
+        byte[] jpg = FakeJpeg(807663);
         byte[] blob = Screenshot(jpg, 1, "Screenshot", "Coin");
         Eq((byte)0xEF, blob[0]); Eq((byte)0x52, blob[1]); Eq((byte)0x0C, blob[2]); Eq((byte)0x00, blob[3]);
         IsNull(c.Handle(SHOT, blob));
@@ -244,12 +253,68 @@ public static class BeaconCallbacksTests
         IsNull(c.Handle(WRITE, Chunk(1, Ascii("12345678"))));
         Contains("exceeded the 10-byte limit", c.Handle(WRITE, Chunk(1, Ascii("9abc"))));
         IsNull(c.Handle(CLOSE, Close(1)));
-        Eq(0, c.Finish().Count);
-        // the dropped file's bytes no longer count against the cap
-        c.Handle(FILE, Open(2, 8, "ok.bin"));
+        // the dropped file's bytes no longer count against the cap (no Finish() in
+        // between, which would reset the total and hide a missing refund)
+        IsNull(c.Handle(FILE, Open(2, 8, "ok.bin")));
         IsNull(c.Handle(WRITE, Chunk(2, Ascii("abcdefgh"))));
         IsNull(c.Handle(CLOSE, Close(2)));
+        List<BofFile> files = c.Finish();
+        Eq(1, files.Count);
+        Eq("ok.bin", files[0].Name);
+    }
+
+    static void EveryPrefixOfAValidPacketIsHandled()
+    {
+        // Each truncation of a valid packet must come back as a note or null, never throw.
+        byte[][] packets = {
+            Open(1, 3, "a.bin"),
+            Chunk(1, Ascii("abc")),
+            Close(1),
+            Screenshot(FakeJpeg(16), 1, "t", "u"),
+        };
+        int[] types = { FILE, WRITE, CLOSE, SHOT };
+        for (int p = 0; p < packets.Length; p++)
+        {
+            for (int n = 0; n <= packets[p].Length; n++)
+            {
+                byte[] prefix = new byte[n];
+                Buffer.BlockCopy(packets[p], 0, prefix, 0, n);
+                BofFileCollector c = new BofFileCollector();
+                c.Handle(FILE, Open(1, 3, "a.bin"));  // so WRITE/CLOSE prefixes hit a known id
+                try { c.Handle(types[p], prefix); }
+                catch (Exception e) { throw new Exception("type " + types[p] + " prefix " + n + " threw " + e.GetType().Name); }
+            }
+        }
+    }
+
+    static void ScreenshotLengthOnePastEndRejected()
+    {
+        BofFileCollector c = new BofFileCollector();
+        byte[] jpg = FakeJpeg(10);
+        Contains("malformed", c.Handle(SHOT, Cat(LE32(11), jpg)));
+        IsNull(c.Handle(SHOT, Cat(LE32(10), jpg)));  // exact fit is fine
         Eq(1, c.Finish().Count);
+        // title length one past the end: image kept, title dropped
+        IsNull(c.Handle(SHOT, Cat(LE32(10), jpg, LE32(1), LE32(3), Ascii("ab"))));
+        BofFile f = c.Finish()[0];
+        Bytes(jpg, f.Data);
+        IsNull(f.Title);
+    }
+
+    static void UnclosedFileGetsNote()
+    {
+        BofFileCollector c = new BofFileCollector();
+        c.Handle(FILE, Open(11, 100, "dump.dmp"));
+        c.Handle(WRITE, Chunk(11, Ascii("MDMP")));
+        string notes;
+        List<BofFile> files = c.Finish(out notes);
+        Eq(1, files.Count);
+        Contains("dump.dmp was never closed; returning 4 of 100 bytes", notes);
+        c.Handle(FILE, Open(12, 1, "ok"));
+        c.Handle(WRITE, Chunk(12, Ascii("x")));
+        c.Handle(CLOSE, Close(12));
+        c.Finish(out notes);
+        Eq("", notes);
     }
 
     static void CapCountsScreenshots()
@@ -271,6 +336,24 @@ public static class BeaconCallbacksTests
         Eq("\n[EMPIRE-BOF-FILE v1] {\"name\":\"a\\\"b\\\\c\\u00e9.jpg\",\"kind\":\"file\",\"size\":4,\"partial\":true}\n"
             + "AAEC/w==\n[/EMPIRE-BOF-FILE]\n", s);
         Eq("", BofFileCollector.FormatFrames(new BofFile[0]));
+    }
+
+    static void FrameHeaderEscapesNewlinesAndNulls()
+    {
+        // A newline in a name must not break the one-line header the server parses.
+        BofFile f = new BofFile();
+        f.Name = "a\nb";
+        f.Kind = "file";
+        f.Data = new byte[] { 1 };
+        Contains("{\"name\":\"a\\u000ab\",", BofFileCollector.FormatFrames(new BofFile[] { f }));
+
+        BofFile shot = new BofFile();
+        shot.Name = "screenshot.jpg";
+        shot.Kind = "screenshot";
+        shot.Data = new byte[] { 9 };
+        shot.Session = 2;
+        Contains(",\"session\":2,\"user\":null,\"title\":null}\n",
+            BofFileCollector.FormatFrames(new BofFile[] { shot }));
     }
 
     static void ScreenshotFrameCarriesMetadata()
@@ -328,6 +411,41 @@ public static class BeaconCallbacksTests
         Eq(1, files.Count);
         Bytes(new byte[] { 0xFF, 0x00, 0xD8 }, files[0].Data);
         Eq(0, BeaconOutputHook.TakeFiles().Count);
+    }
+
+    static void HookRoutesScreenshots()
+    {
+        fakeCText.Length = 0; fakeCTypes.Clear();
+        IntPtr hookPtr = BeaconOutputHook.Install(Marshal.GetFunctionPointerForDelegate(fakeC));
+        BeaconOutputHook.BeaconOutputFn hook = (BeaconOutputHook.BeaconOutputFn)Marshal.GetDelegateForFunctionPointer(hookPtr, typeof(BeaconOutputHook.BeaconOutputFn));
+        byte[] jpg = FakeJpeg(64);
+        Call(hook, SHOT, Screenshot(jpg, 1, "Screenshot", "Coin"));
+        Eq(0, fakeCTypes.Count);  // screenshot bytes never reach C
+        List<BofFile> files = BeaconOutputHook.TakeFiles();
+        Eq(1, files.Count);
+        Eq("screenshot", files[0].Kind);
+        Bytes(jpg, files[0].Data);
+    }
+
+    static BeaconOutputHook.BeaconOutputFn throwingC = ThrowingCBeaconOutput;  // static: keep alive
+    static int throwingCCalls;
+
+    static void ThrowingCBeaconOutput(int type, IntPtr data, int len)
+    {
+        throwingCCalls++;
+        throw new InvalidOperationException("boom");
+    }
+
+    static void HookNeverLetsAnExceptionEscape()
+    {
+        // Native BOF frames have no unwind info, so nothing may propagate out of the hook,
+        // including a failure while reporting the first failure.
+        throwingCCalls = 0;
+        IntPtr hookPtr = BeaconOutputHook.Install(Marshal.GetFunctionPointerForDelegate(throwingC));
+        BeaconOutputHook.BeaconOutputFn hook = (BeaconOutputHook.BeaconOutputFn)Marshal.GetDelegateForFunctionPointer(hookPtr, typeof(BeaconOutputHook.BeaconOutputFn));
+        Call(hook, 0x00, Ascii("text"));
+        Eq(2, throwingCCalls);  // the forward, then the attempt to report it
+        BeaconOutputHook.Install(Marshal.GetFunctionPointerForDelegate(fakeC));
     }
 
     static void InstallResetsCollector()
