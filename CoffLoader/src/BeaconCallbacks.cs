@@ -250,9 +250,10 @@ namespace CoffLoader
 
         private static string DecodeName(byte[] data, int offset, int count)
         {
-            // BOFs pass ANSI char* names, some with a trailing NUL.
-            while (count > 0 && data[offset + count - 1] == 0)
-                count--;
+            // BOFs pass ANSI char* names, some NUL-terminated: like C, stop at the first NUL.
+            int nul = Array.IndexOf(data, (byte)0, offset, count);
+            if (nul >= 0)
+                count = nul - offset;
             return Encoding.Default.GetString(data, offset, count);
         }
 
@@ -354,13 +355,12 @@ namespace CoffLoader
         {
             try
             {
-                if (data == IntPtr.Zero)
-                    return;
-                if (len < 0)
+                if (data == IntPtr.Zero || len < 0)
                 {
+                    // Text goes the C side's way (it ignores NULL); a file callback gets a note.
                     if (BofFileCollector.IsFileCallback(type))
                         WriteText("[!] BOF file callback: dropped a type 0x" + type.ToString("x")
-                            + " callback with negative length " + len + "\n");
+                            + " callback with " + (data == IntPtr.Zero ? "NULL data" : "negative length " + len) + "\n");
                     return;
                 }
                 if (!BofFileCollector.IsFileCallback(type))

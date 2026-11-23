@@ -129,6 +129,9 @@ public static class BeaconCallbacksTests
         c.Handle(WRITE, Chunk(7, new byte[] { 0x42 }));
         c.Handle(CLOSE, Close(7));
         Eq("x.pfx", c.Finish()[0].Name);
+        c.Handle(FILE, Cat(BE32(8), BE32(0), Ascii("a"), new byte[] { 0 }, Ascii("b.bin")));
+        c.Handle(CLOSE, Close(8));
+        Eq("a", c.Finish()[0].Name);  // embedded NUL ends the name, as in C
     }
 
     static void ShortCloseIsPartialWithNote()
@@ -522,8 +525,10 @@ public static class BeaconCallbacksTests
         hook(WRITE, p, -1);
         hook(0x00, p, -1);  // text with a negative length: dropped, as the C side would mishandle it
         Marshal.FreeHGlobal(p);
+        hook(FILE, IntPtr.Zero, 8);
         Contains("negative length -1", fakeCText.ToString());
-        Eq(1, fakeCTypes.Count);
+        Contains("callback with NULL data", fakeCText.ToString());
+        Eq(2, fakeCTypes.Count);
     }
 
     static void InstallResetsCollector()
