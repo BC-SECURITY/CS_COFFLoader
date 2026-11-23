@@ -82,14 +82,12 @@ namespace CoffLoader
                 if (CoffParser.parseCOFF(functionname, coff_data, coff_data.Length, arg_data, arg_data.Length) == 1)
                 {
                     Result = "ERROR";
-                    beaconOutputData = hookWarning + "parseCOFF failed: 1";
-                    beaconOutputData_sz = beaconOutputData.Length;
+                    beaconOutputData = "parseCOFF failed: 1";
                     CoffParser.CleanUpMemoryAllocations();
                 }
                 else
                 {
-                    beaconOutputData = hookWarning + CoffParser.getBeaconOutputData();
-                    beaconOutputData_sz = beaconOutputData.Length;
+                    beaconOutputData = CoffParser.getBeaconOutputData();
                     CoffParser.CleanUpMemoryAllocations();
                 }
             }
@@ -97,9 +95,11 @@ namespace CoffLoader
             {
                 Debug.WriteLine($"Exception: '{e}'");
                 Result = "ERROR";
-                beaconOutputData = hookWarning + $"RunCoff exception: {e.GetType().Name}: {e.Message}";
-                beaconOutputData_sz = beaconOutputData.Length;
+                beaconOutputData = $"RunCoff exception: {e.GetType().Name}: {e.Message}";
             }
+
+            beaconOutputData = hookWarning + beaconOutputData;
+            beaconOutputData_sz = beaconOutputData.Length;
 
             return Result;
         }

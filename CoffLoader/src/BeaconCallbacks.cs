@@ -13,7 +13,6 @@ namespace CoffLoader
         public string Kind;          // "file" or "screenshot"
         public byte[] Data;
         public bool Partial;         // byte count differs from the declared size, or never closed
-        public long DeclaredSize;
         public int Session = -1;     // screenshot only
         public string User;          // screenshot only
         public string Title;         // screenshot only
@@ -121,8 +120,7 @@ namespace CoffLoader
             if (totalBytes + size > maxTotalBytes)
             {
                 dropped.Add(id);
-                return Note("dropping " + name + ": " + size + " bytes would exceed the "
-                    + maxTotalBytes + "-byte limit" + CapAdvice);
+                return CapNote(name + ": " + size + " bytes would exceed");
             }
             PendingFile file = new PendingFile();
             file.Name = name;
@@ -148,7 +146,7 @@ namespace CoffLoader
                 open.Remove(id);
                 dropped.Add(id);
                 totalBytes -= file.Buffer.Length;
-                return Note("dropping " + file.Name + ": exceeded the " + maxTotalBytes + "-byte limit" + CapAdvice);
+                return CapNote(file.Name + ": exceeded");
             }
             file.Buffer.Write(data, 4, chunk);
             totalBytes += chunk;
@@ -182,8 +180,7 @@ namespace CoffLoader
             if (!TryReadLE32Length(data, ref offset, out jpgLen))
                 return Note("screenshot header malformed (" + data.Length + " bytes)");
             if (totalBytes + jpgLen > maxTotalBytes)
-                return Note("dropping screenshot: " + jpgLen + " bytes would exceed the "
-                    + maxTotalBytes + "-byte limit" + CapAdvice);
+                return CapNote("screenshot: " + jpgLen + " bytes would exceed");
             byte[] jpg = new byte[jpgLen];
             Buffer.BlockCopy(data, offset, jpg, 0, jpgLen);
             offset += jpgLen;
@@ -192,7 +189,6 @@ namespace CoffLoader
             shot.Name = "screenshot.jpg";
             shot.Kind = "screenshot";
             shot.Data = jpg;
-            shot.DeclaredSize = jpgLen;
 
             // The trailer is metadata; keep the image even when it is short or malformed.
             int titleLen, userLen;
@@ -219,7 +215,6 @@ namespace CoffLoader
             file.Name = pending.Name;
             file.Kind = "file";
             file.Data = pending.Buffer.ToArray();
-            file.DeclaredSize = pending.DeclaredSize;
             file.Partial = partial;
             return file;
         }
@@ -257,9 +252,14 @@ namespace CoffLoader
             return Encoding.Default.GetString(data, offset, count);
         }
 
+        private string CapNote(string what)
+        {
+            return Note("dropping " + what + " the " + maxTotalBytes + "-byte limit" + CapAdvice);
+        }
+
         // Names in notes are BOF-supplied; control characters are escaped so a name
         // cannot start a new line that looks like a frame marker.
-        private static string Note(string message)
+        internal static string Note(string message)
         {
             StringBuilder sb = new StringBuilder("[!] BOF file callback: ");
             foreach (char c in message)
@@ -359,8 +359,8 @@ namespace CoffLoader
                 {
                     // Text goes the C side's way (it ignores NULL); a file callback gets a note.
                     if (BofFileCollector.IsFileCallback(type))
-                        WriteText("[!] BOF file callback: dropped a type 0x" + type.ToString("x")
-                            + " callback with " + (data == IntPtr.Zero ? "NULL data" : "negative length " + len) + "\n");
+                        WriteText(BofFileCollector.Note("dropped a type 0x" + type.ToString("x")
+                            + " callback with " + (data == IntPtr.Zero ? "NULL data" : "negative length " + len)));
                     return;
                 }
                 if (!BofFileCollector.IsFileCallback(type))
@@ -378,8 +378,8 @@ namespace CoffLoader
             {
                 try
                 {
-                    WriteText("[!] BOF file callback: dropped a type 0x" + type.ToString("x")
-                        + " callback of " + len + " bytes: " + e.GetType().Name + ": " + e.Message + "\n");
+                    WriteText(BofFileCollector.Note("dropped a type 0x" + type.ToString("x")
+                        + " callback of " + len + " bytes: " + e.GetType().Name + ": " + e.Message));
                 }
                 catch (Exception)
                 {

@@ -760,18 +760,17 @@ namespace CoffLoader
         [DllImport("msvcrt.dll", EntryPoint = "free", CallingConvention = CallingConvention.Cdecl)]
         private static extern void msvcrt_free(IntPtr ptr);
 
-        // Puts the managed BeaconOutput hook ahead of the C one, so BOFs bind to it
-        // (process_symbol takes the first hash match). Call after the beacon
-        // compatibility object is parsed and before the BOF is.
+        // Replaces the C BeaconOutput entry with the managed hook, so BOFs bind to it.
+        // Call after the beacon compatibility object is parsed and before the BOF is.
         public static bool InstallBeaconOutputHook()
         {
             uint hash = hash_djb(Encoding.Default.GetBytes("BeaconOutput"));
-            foreach (BEACON_FUNCTION tmp in BeaconInternalMapping)
+            for (int i = 0; i < BeaconInternalMapping.Count; i++)
             {
-                if (tmp.hash == hash)
+                if (BeaconInternalMapping[i].hash == hash)
                 {
-                    IntPtr hookPtr = BeaconOutputHook.Install(new IntPtr(tmp.function));
-                    BeaconInternalMapping.Insert(0, new BEACON_FUNCTION(hash, hookPtr.ToPointer()));
+                    IntPtr hookPtr = BeaconOutputHook.Install(new IntPtr(BeaconInternalMapping[i].function));
+                    BeaconInternalMapping[i] = new BEACON_FUNCTION(hash, hookPtr.ToPointer());
                     return true;
                 }
             }
